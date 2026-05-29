@@ -1,0 +1,4 @@
+# Local env, generated TLS material, and rendered nginx config — never commit.
+.env
+certs/
+.run/

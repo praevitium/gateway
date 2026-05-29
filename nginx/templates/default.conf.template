@@ -1,0 +1,106 @@
+# RMO gateway — single-origin TLS front door for web (:3100) + ratchet (:3000).
+#
+# One template, two runtimes. Rendered by envsubst:
+#   • native nginx — scripts/run-native.sh substitutes host paths + high ports
+#   • docker        — the nginx image entrypoint substitutes container paths
+# Substituted vars: SERVER_NAME, WEB_UPSTREAM, RATCHET_UPSTREAM, HTTP_LISTEN,
+# HTTPS_LISTEN, REDIRECT_HTTPS_PORT, CERT_DIR, SNIPPET_DIR. nginx's own
+# $variables ($host, $scheme, …) survive because no matching env var exists.
+
+upstream ratchet {
+    server ${RATCHET_UPSTREAM};
+    keepalive 32;
+}
+
+upstream web {
+    server ${WEB_UPSTREAM};
+    keepalive 32;
+}
+
+# Plain HTTP → permanent redirect to HTTPS.
+server {
+    listen ${HTTP_LISTEN};
+    listen [::]:${HTTP_LISTEN};
+    server_name ${SERVER_NAME};
+
+    # Let nginx answer ACME http-01 challenges in place if a real cert is ever wired.
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+
+    location / {
+        return 301 https://$host${REDIRECT_HTTPS_PORT}$request_uri;
+    }
+}
+
+server {
+    listen ${HTTPS_LISTEN} ssl;
+    listen [::]:${HTTPS_LISTEN} ssl;
+    http2 on;
+    server_name ${SERVER_NAME};
+
+    ssl_certificate     ${CERT_DIR}/fullchain.pem;
+    ssl_certificate_key ${CERT_DIR}/privkey.pem;
+
+    ssl_protocols       TLSv1.2 TLSv1.3;
+    ssl_ciphers         HIGH:!aNULL:!MD5;
+    ssl_prefer_server_ciphers on;
+    ssl_session_cache   shared:SSL:10m;
+    ssl_session_timeout 1d;
+
+    # Generous ceiling for photo/PDF attachment uploads (POST /api/attachments).
+    client_max_body_size 50m;
+
+    # Security headers. HSTS is commented out so a self-signed dev cert doesn't
+    # pin browsers to HTTPS for localhost; enable it behind a real cert.
+    # add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+
+    # ---- ratchet backend: API, skillbox renderers, frontend module, probes ----
+
+    # SSE chat stream — buffering MUST stay off or tokens arrive in bursts.
+    location = /api/chat {
+        proxy_pass http://ratchet;
+        include ${SNIPPET_DIR}/proxy-common.conf;
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_read_timeout 1h;
+        proxy_send_timeout 1h;
+        chunked_transfer_encoding on;
+    }
+
+    location /api/ {
+        proxy_pass http://ratchet;
+        include ${SNIPPET_DIR}/proxy-common.conf;
+    }
+
+    location /skillbox/ {
+        proxy_pass http://ratchet;
+        include ${SNIPPET_DIR}/proxy-common.conf;
+    }
+
+    location /dist/ {
+        proxy_pass http://ratchet;
+        include ${SNIPPET_DIR}/proxy-common.conf;
+    }
+
+    location = /health {
+        proxy_pass http://ratchet;
+        include ${SNIPPET_DIR}/proxy-common.conf;
+        access_log off;
+    }
+
+    location = /ready {
+        proxy_pass http://ratchet;
+        include ${SNIPPET_DIR}/proxy-common.conf;
+        access_log off;
+    }
+
+    # ---- web host: static page + everything else ----
+    location / {
+        proxy_pass http://web;
+        include ${SNIPPET_DIR}/proxy-common.conf;
+    }
+}
