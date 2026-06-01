@@ -86,6 +86,14 @@ server {
         include ${SNIPPET_DIR}/proxy-common.conf;
     }
 
+    # In-app docs (Feature Gallery / Tutorial / Architecture). Served by
+    # ratchet only when ENABLE_DOCS_FEATURES is on — production deploys
+    # leave that off, so this route returns ratchet's 404 there.
+    location /docs {
+        proxy_pass http://ratchet;
+        include ${SNIPPET_DIR}/proxy-common.conf;
+    }
+
     location = /health {
         proxy_pass http://ratchet;
         include ${SNIPPET_DIR}/proxy-common.conf;
