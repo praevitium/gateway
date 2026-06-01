@@ -1,0 +1,10 @@
+.git
+.gitignore
+.env
+.env.local
+.DS_Store
+.vscode
+.idea
+*.log
+.run
+logs
